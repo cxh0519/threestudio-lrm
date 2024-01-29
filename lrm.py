@@ -18,12 +18,16 @@ import torch.nn.functional as F
 from threestudio.utils.base import BaseObject
 from threestudio.utils.typing import *
 
+from mvdream.camera_utils import get_camera
+from mvdream.ldm.util import instantiate_from_config
+from mvdream.ldm.models.diffusion.ddim import DDIMSampler
+from mvdream.model_zoo import build_model
 
 @threestudio.register("lrm-guidance")
 class lrm_Guidance(BaseObject):
     @dataclass
     class Config(BaseObject.Config):
-        model_name: str = "lrm-base-obj-v1"
+        model_name: str = "openlrm-large-obj-1.0"
         sd_model_name: str = "stabilityai/stable-diffusion-xl-base-1.0"
         mode: str = "text2image" # image2image or text2image
         skip: int = 4
@@ -43,7 +47,7 @@ class lrm_Guidance(BaseObject):
     def densify(self, factor=2):
         pass
 
-    def remove_background(self, image_path, output_size=512, border_ratio=0.2, recenter=True, model='u2net'):
+    def remove_background(self, image_path, output_size=512, border_ratio=0.2, recenter=False, model='u2net'):
         """
         Removes the background from an image.
 
@@ -138,8 +142,7 @@ class lrm_Guidance(BaseObject):
 
         # Extract mesh and convert to point cloud
         mesh = results['mesh']
-        # mesh.export(os.path.join(self.cfg.dump_path, f'tmp.ply'), 'ply')
-        
+        mesh.export(os.path.join(self.cfg.dump_path, f'tmp.ply'), 'ply')
         
         coords, face_index, colors = sample_surface(mesh, 10000, sample_color=True)
         
@@ -147,6 +150,125 @@ class lrm_Guidance(BaseObject):
         rgb = rgb.astype(np.float32) / 255.0
 
         return coords, rgb
+
+
+@threestudio.register("lrm-mvdream-guidance")
+class lrm_MVDream_Guidance(lrm_Guidance):
+    @dataclass
+    class Config(BaseObject.Config):
+        sd_model_name: str = "sd-v2.1-base-4view"
+        model_name: str = "openlrm-large-obj-1.0"
+        skip: int = 4
+        source_image: str = "custom/threestudio-lrm/tmp.jpg"  # Add default path or leave empty
+        dump_path: str = "custom/threestudio-lrm/OpenLRM/"  # Add default path or leave empty
+        source_size: int = -1  # Default value or specify a size
+        render_size: int = -1  # Default value or specify a size
+        mesh_size: int = 384  # Default value or specify a size
+        export_video: bool = False  # Default value
+        export_mesh: bool = True  # Default value
+
+    cfg: Config
+
+    def t2i(self, model, image_size, prompt, uc, sampler, step=20, scale=7.5, batch_size=8, ddim_eta=0., dtype=torch.float32, device="cuda", camera=None, num_frames=1):
+        if type(prompt)!=list:
+            prompt = [prompt]
+        with torch.no_grad(), torch.autocast(device_type=device, dtype=dtype):
+            c = model.get_learned_conditioning(prompt).to(device)
+            c_ = {"context": c.repeat(batch_size,1,1)}
+            uc_ = {"context": uc.repeat(batch_size,1,1)}
+            if camera is not None:
+                c_["camera"] = uc_["camera"] = camera
+                c_["num_frames"] = uc_["num_frames"] = num_frames
+
+            shape = [4, image_size // 8, image_size // 8]
+
+            samples_ddim, _ = sampler.sample(S=step, conditioning=c_,
+                                            batch_size=batch_size, shape=shape,
+                                            verbose=False, 
+                                            unconditional_guidance_scale=scale,
+                                            unconditional_conditioning=uc_,
+                                            eta=ddim_eta, x_T=None)
+                                            
+            x_sample = model.decode_first_stage(samples_ddim)
+            
+            x_sample = torch.clamp((x_sample + 1.0) / 2.0, min=0.0, max=1.0)
+            x_sample = 255. * x_sample.permute(0,2,3,1).cpu().numpy()
+
+        return list(x_sample.astype(np.uint8))
+
+    def __call__(
+        self,
+        prompt,
+        **kwargs,
+    ):
+        """
+        Executes the lrm_Guidance object.
+
+        Args:
+            prompt: The input prompt.
+
+        Returns:
+            tuple: A tuple containing the coordinates and RGB values.
+        """
+        threestudio.info(f"Loading lrm-mvdream guidance ...")
+
+        device = "cuda"
+        model = build_model(self.cfg.sd_model_name, ckpt_path=None).to(device)
+        model.device = device
+        model.eval()
+
+        sampler = DDIMSampler(model)
+        uc = model.get_learned_conditioning( [""] ).to(device)
+        
+        camera = get_camera(4, elevation=15, 
+                azimuth_start=90, azimuth_span=360)
+        camera = camera.repeat(1, 1).to(device)
+
+        t = prompt + ", 3d asset"
+        img = self.t2i(model, 256, t, uc, sampler, step=50, scale=10.0, batch_size=4, ddim_eta=0.0, 
+                dtype=torch.float32, device=device, camera=camera, num_frames=4)
+        img = np.concatenate(img, 1)
+        Image.fromarray(img).save("custom/threestudio-lrm/sample.png")
+        Image.fromarray(img[:, :256, ...]).save(self.cfg.source_image.split('.')[0] + '_0.png')
+        Image.fromarray(img[:, 256:512, ...]).save(self.cfg.source_image.split('.')[0] + '_1.png')
+
+        source_image_0 = self.remove_background(self.cfg.source_image.split('.')[0] + '_0.png')
+        source_image_1 = self.remove_background(self.cfg.source_image.split('.')[0] + '_1.png')
+        
+        with LRMInferrer(model_name=self.cfg.model_name) as inferrer:
+            source_image_size = self.cfg.source_size if self.cfg.source_size > 0 else inferrer.infer_kwargs['source_size']
+
+            image_0 = torch.tensor(np.array(Image.open(source_image_0))).permute(2, 0, 1).unsqueeze(0) / 255.0
+            image_1 = torch.tensor(np.array(Image.open(source_image_1))).permute(2, 0, 1).unsqueeze(0) / 255.0
+            
+            trans = True
+            image = image_0
+            if image_1[0, 3, ...].sum() > image_0[0, 3, ...].sum() * 1.5:
+                trans = False
+                image = image_1
+            # if RGBA, blend to RGB
+            if image.shape[1] == 4:
+                image = image[:, :3, ...] * image[:, 3:, ...] + (1 - image[:, 3:, ...])
+            image = torch.nn.functional.interpolate(image, size=(source_image_size, source_image_size), mode='bicubic', align_corners=True)
+            image = torch.clamp(image, 0, 1)
+            results = inferrer.infer_single(
+                image.to(self.device),
+                render_size=self.cfg.render_size if self.cfg.render_size > 0 else inferrer.infer_kwargs['render_size'],
+                mesh_size=self.cfg.mesh_size,
+                export_video=self.cfg.export_video,
+                export_mesh=self.cfg.export_mesh,
+            )
+
+        # Extract mesh and convert to point cloud
+        mesh = results['mesh']
+        mesh.export(os.path.join(self.cfg.dump_path, f'tmp.ply'), 'ply')
+        
+        coords, face_index, colors = sample_surface(mesh, 10000, sample_color=True)
+        
+        rgb = colors[:,:3]
+        rgb = rgb.astype(np.float32) / 255.0
+
+        return coords, rgb, trans
 
 
 if __name__ == "__main__":
