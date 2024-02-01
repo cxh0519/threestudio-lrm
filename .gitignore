@@ -185,5 +185,4 @@ outputs-gradio/
 *.pt
 *.pth
 
-# wandb
 *.png
