@@ -1,37 +1,23 @@
 # threestudio-lrm
-The threestudio-lrm is an extension for threestudio, integrating the Large Reconstruction Model (LRM) for advanced 3D reconstruction tasks. This model is based on the framework detailed at [https://yiconghong.me/LRM/](https://yiconghong.me/LRM/). We have adapted the open-source implementation from [OpenLRM](https://github.com/3DTopia/OpenLRM). Currently, it is only used for initialization of Gaussian Splatting.
+The threestudio-lrm is an extension for threestudio, integrating the Large Reconstruction Model (LRM) for advanced 3D reconstruction tasks. This model is based on the framework detailed at [https://yiconghong.me/LRM/](https://yiconghong.me/LRM/). We have adapted the open-source implementation from [OpenLRM](https://github.com/3DTopia/OpenLRM). Currently, it is only used for initialization of [threestudio-gaussiandreamer](https://github.com/cxh0519/threestudio-gaussiandreamer.git).
 
 ## Installation
 ```
 cd custom
-git clone https://github.com/Adamdad/threestudio-lrm
-
-# install openLRM
+git clone https://github.com/cxh0519/threestudio-lrm
 cd threestudio-lrm
-git clone https://github.com/3DTopia/OpenLRM.git
-cd OpenLRM
 pip install -r requirements.txt
 ```
 
-## Examples
-Please see [threestudio-3dgs](https://github.com/DSaurus/threestudio-3dgs#load-from-ply) for more details.
+## 🚀Quick Start
+See [threestudio-gaussiandreamer](https://github.com/cxh0519/threestudio-gaussiandreamer.git).
 
-## Supported Modes
+## 📢Discussion
+**Difference with original** [threestudio-lrm](https://github.com/Adamdad/threestudio-lrm)
 
-The threestudio-lrm currently supports two modes:
+* Using lrm+MVDream initailzation instead of lrm+SDXL. Compared to SDXL, MVDream generates more appropriate front/side view images for given text prompt.
 
-1. **Text-to-Image Mode (`text2image`):**
-   - Generates a single image from a text prompt using SDXL.
-   - Transforms the image into a triplanar representation, then to a mesh, and finally to a point cloud using LRM.
-   - Initialize the 3DGS
-
-2. **Image-to-Image Mode (`image2image`):**
-   - Directly loads a single-view image.
-   - Generates a point cloud from this image.
-   - Initialize the 3DGS
-
-
-## Citation
+## 📌Citation
 If you use threestudio-lrm in your research, please cite the following paper:
 ```
 @article{hong2023lrm,
