@@ -10,7 +10,7 @@ pip install -r requirements.txt
 ```
 
 ## 🚀Quick Start
-See [threestudio-gaussiandreamer](https://github.com/cxh0519/threestudio-gaussiandreamer.git).
+See [threestudio-gaussiandreamer](https://github.com/cxh0519/threestudio-gaussiandreamer.git) for details.
 
 ## 📢Discussion
 **Difference with original** [threestudio-lrm](https://github.com/Adamdad/threestudio-lrm)
